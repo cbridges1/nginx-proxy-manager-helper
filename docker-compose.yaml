@@ -1,0 +1,15 @@
+version: '3.1'
+
+services:
+  proxy-helper:
+    container_name: proxy-helper
+    build: .
+    environment:
+      - NPM_SERVER=${NPM_SERVER}
+      - FORWARD_HOST=${FORWARD_HOST}
+      - FORWARD_PORT=${FORWARD_PORT}
+      - DOMAIN_NAME=${DOMAIN_NAME}
+      - USERNAME=${USERNAME}
+      - PASSWORD=${PASSWORD}
+      - REPEAT=${REPEAT}
+    restart: always

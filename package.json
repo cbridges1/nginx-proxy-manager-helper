@@ -1,0 +1,9 @@
+{
+    "scripts": {
+      "start": "node index.js",
+      "deploy-local": "docker-compose up -d"
+    },
+    "dependencies": {
+      "dotenv": "^16.4.5"
+    }
+  }
