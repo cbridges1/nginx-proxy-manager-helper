@@ -10,6 +10,6 @@ USER node
 
 RUN npm install
 
-COPY --chown=node:node . .
+COPY --chown=node:node .. .
 
 CMD ["node", "index.js"]
