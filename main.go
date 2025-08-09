@@ -13,6 +13,12 @@ import (
 func main() {
 	ctx := context.Background()
 
+	// Load configuration
+	config, err := LoadConfig()
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
+	}
+
 	// Initialize database
 	db, err := InitDB()
 	if err != nil {
@@ -38,14 +44,31 @@ func main() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
+	// Initialize NPM client
+	npmClient := NewNPMClient(config)
+	log.Printf("DEBUG: NPM client initialized for %s", npmClient.BaseURL)
+
+	// Sync existing domains from database to NPM on startup
+	log.Printf("DEBUG: Syncing existing domains from database to NPM")
+	if existingDomains, err := GetAllDomains(db); err != nil {
+		log.Printf("ERROR: Failed to get existing domains: %v", err)
+	} else if len(existingDomains) > 0 {
+		log.Printf("DEBUG: Found %d existing domains to sync", len(existingDomains))
+		if err := npmClient.SyncDomainsToNPM(existingDomains); err != nil {
+			log.Printf("ERROR: Failed to sync existing domains to NPM: %v", err)
+		} else {
+			log.Printf("DEBUG: Successfully synced existing domains to NPM")
+		}
+	}
+
 	// Run initial reconciliation
-	go ReconcileContainers(ctx, cli, db)
+	go ReconcileContainers(ctx, cli, db, npmClient)
 
 	for {
 		select {
 		case <-ticker.C:
 			// Run reconciliation every minute
-			go ReconcileContainers(ctx, cli, db)
+			go ReconcileContainers(ctx, cli, db, npmClient)
 		//case msg := <-messages:
 		//	if msg.Type == "container" {
 		//		containerID := msg.ID

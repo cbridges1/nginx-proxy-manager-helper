@@ -3,8 +3,9 @@ package main
 import (
 	"database/sql"
 	"fmt"
-	_ "github.com/tursodatabase/go-libsql"
 	"log"
+
+	_ "github.com/tursodatabase/go-libsql"
 )
 
 func InitDB() (*sql.DB, error) {
@@ -189,4 +190,24 @@ func GetAllContainerIDs(db *sql.DB) ([]string, error) {
 	}
 
 	return containerIDs, nil
+}
+
+func GetAllDomains(db *sql.DB) ([]DomainConfig, error) {
+	query := `SELECT domain, address, port FROM container_domains`
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query all domains: %w", err)
+	}
+	defer rows.Close()
+
+	var domains []DomainConfig
+	for rows.Next() {
+		var config DomainConfig
+		if err := rows.Scan(&config.Domain, &config.Address, &config.Port); err != nil {
+			return nil, fmt.Errorf("failed to scan domain: %w", err)
+		}
+		domains = append(domains, config)
+	}
+
+	return domains, nil
 }

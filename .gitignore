@@ -1,6 +1,7 @@
-archive/.env
+.env
 node_modules
 .env
 */.env
 *.db
 .idea
+nginx-proxy-manager-helper

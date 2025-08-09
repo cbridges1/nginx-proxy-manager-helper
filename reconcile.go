@@ -9,7 +9,7 @@ import (
 	"github.com/docker/docker/client"
 )
 
-func ReconcileContainers(ctx context.Context, cli *client.Client, db *sql.DB) {
+func ReconcileContainers(ctx context.Context, cli *client.Client, db *sql.DB, npmClient *NPMClient) {
 	log.Printf("DEBUG: Starting container reconciliation")
 
 	containers, err := cli.ContainerList(ctx, types.ContainerListOptions{All: true})
@@ -52,6 +52,14 @@ func ReconcileContainers(ctx context.Context, cli *client.Client, db *sql.DB) {
 				}
 				if err := InsertOrUpdateDomains(db, containerID, domains); err != nil {
 					log.Printf("ERROR: Failed to update domains during reconciliation: %v", err)
+				} else {
+					// Sync domains to NPM after successful database update
+					log.Printf("DEBUG: Syncing domains to NPM for container %s", containerID)
+					if err := npmClient.SyncDomainsToNPM(domains); err != nil {
+						log.Printf("ERROR: Failed to sync domains to NPM for container %s: %v", containerID, err)
+					} else {
+						log.Printf("DEBUG: Successfully synced domains to NPM for container %s", containerID)
+					}
 				}
 			}
 		} else {
