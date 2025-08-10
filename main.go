@@ -73,21 +73,31 @@ func main() {
 		log.Printf("ERROR: Failed to get existing domains: %v", err)
 	} else if len(existingDomains) > 0 {
 		log.Printf("DEBUG: Found %d existing domains to sync", len(existingDomains))
-		if err := npmClient.SyncDomainsToNPM(existingDomains); err != nil {
+		if err := npmClient.SyncDomainsToNPM(existingDomains, config.CreateWildcardCerts, config.LetsEncryptEmail, config.CloudflareToken); err != nil {
 			log.Printf("ERROR: Failed to sync existing domains to NPM: %v", err)
 		} else {
 			log.Printf("DEBUG: Successfully synced existing domains to NPM")
 		}
 	}
 
+	// Create wildcard certificates if enabled
+	if config.CreateWildcardCerts && config.CloudflareEnabled && len(config.CloudflareDomains) > 0 {
+		log.Printf("DEBUG: Creating wildcard certificates for Cloudflare domains")
+		go func() {
+			if err := npmClient.CreateWildcardCertificatesForDomains(config.CloudflareDomains, config.LetsEncryptEmail, config.CloudflareToken); err != nil {
+				log.Printf("ERROR: Failed to create wildcard certificates: %v", err)
+			}
+		}()
+	}
+
 	// Run initial reconciliation
-	go ReconcileContainers(ctx, cli, db, npmClient)
+	go ReconcileContainers(ctx, cli, db, npmClient, config)
 
 	for {
 		select {
 		case <-ticker.C:
 			// Run reconciliation every minute
-			go ReconcileContainers(ctx, cli, db, npmClient)
+			go ReconcileContainers(ctx, cli, db, npmClient, config)
 		case <-dnsTicker.C:
 			// Run Cloudflare DNS update every 5 minutes
 			if cloudflareClient.Enabled {
@@ -150,7 +160,7 @@ func main() {
 						ListAllEntries(db)
 						// Sync domains to NPM after successful database update
 						log.Printf("DEBUG: Syncing domains to NPM for container %s", containerID)
-						if err := npmClient.SyncDomainsToNPM(domains); err != nil {
+						if err := npmClient.SyncDomainsToNPM(domains, config.CreateWildcardCerts, config.LetsEncryptEmail, config.CloudflareToken); err != nil {
 							log.Printf("ERROR: Failed to sync domains to NPM for container %s: %v", containerID, err)
 						} else {
 							log.Printf("DEBUG: Successfully synced domains to NPM for container %s", containerID)

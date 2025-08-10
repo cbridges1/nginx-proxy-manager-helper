@@ -9,7 +9,7 @@ import (
 	"github.com/docker/docker/client"
 )
 
-func ReconcileContainers(ctx context.Context, cli *client.Client, db *sql.DB, npmClient *NPMClient) {
+func ReconcileContainers(ctx context.Context, cli *client.Client, db *sql.DB, npmClient *NPMClient, config *Config) {
 	log.Printf("DEBUG: Starting container reconciliation")
 
 	containers, err := cli.ContainerList(ctx, types.ContainerListOptions{All: true})
@@ -55,7 +55,7 @@ func ReconcileContainers(ctx context.Context, cli *client.Client, db *sql.DB, np
 				} else {
 					// Sync domains to NPM after successful database update
 					log.Printf("DEBUG: Syncing domains to NPM for container %s", containerID)
-					if err := npmClient.SyncDomainsToNPM(domains); err != nil {
+					if err := npmClient.SyncDomainsToNPM(domains, config.CreateWildcardCerts, config.LetsEncryptEmail, config.CloudflareToken); err != nil {
 						log.Printf("ERROR: Failed to sync domains to NPM for container %s: %v", containerID, err)
 					} else {
 						log.Printf("DEBUG: Successfully synced domains to NPM for container %s", containerID)

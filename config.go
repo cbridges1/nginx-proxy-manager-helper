@@ -8,13 +8,15 @@ import (
 )
 
 type Config struct {
-	NPMBaseURL        string
-	NPMEmail          string
-	NPMPassword       string
-	CloudflareEnabled bool
-	CloudflareToken   string
-	CloudflareZoneID  string
-	CloudflareDomains []string
+	NPMBaseURL          string
+	NPMEmail            string
+	NPMPassword         string
+	CloudflareEnabled   bool
+	CloudflareToken     string
+	CloudflareZoneID    string
+	CloudflareDomains   []string
+	CreateWildcardCerts bool
+	LetsEncryptEmail    string
 }
 
 func LoadConfig() (*Config, error) {
@@ -31,6 +33,8 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("CLOUDFLARE_TOKEN", "")
 	viper.SetDefault("CLOUDFLARE_ZONE_ID", "")
 	viper.SetDefault("CLOUDFLARE_DOMAINS", "")
+	viper.SetDefault("CREATE_WILDCARD_CERTS", "false")
+	viper.SetDefault("LETSENCRYPT_EMAIL", "")
 
 	// Read config file if it exists
 	if err := viper.ReadInConfig(); err != nil {
@@ -56,13 +60,15 @@ func LoadConfig() (*Config, error) {
 	}
 
 	config := &Config{
-		NPMBaseURL:        viper.GetString("NPM_BASE_URL"),
-		NPMEmail:          viper.GetString("NPM_EMAIL"),
-		NPMPassword:       viper.GetString("NPM_PASSWORD"),
-		CloudflareEnabled: viper.GetBool("CLOUDFLARE_ENABLED"),
-		CloudflareToken:   viper.GetString("CLOUDFLARE_TOKEN"),
-		CloudflareZoneID:  viper.GetString("CLOUDFLARE_ZONE_ID"),
-		CloudflareDomains: domains,
+		NPMBaseURL:          viper.GetString("NPM_BASE_URL"),
+		NPMEmail:            viper.GetString("NPM_EMAIL"),
+		NPMPassword:         viper.GetString("NPM_PASSWORD"),
+		CloudflareEnabled:   viper.GetBool("CLOUDFLARE_ENABLED"),
+		CloudflareToken:     viper.GetString("CLOUDFLARE_TOKEN"),
+		CloudflareZoneID:    viper.GetString("CLOUDFLARE_ZONE_ID"),
+		CloudflareDomains:   domains,
+		CreateWildcardCerts: viper.GetBool("CREATE_WILDCARD_CERTS"),
+		LetsEncryptEmail:    viper.GetString("LETSENCRYPT_EMAIL"),
 	}
 
 	log.Printf("DEBUG: NPM configuration - URL: %s, Email: %s", config.NPMBaseURL, config.NPMEmail)
@@ -70,6 +76,11 @@ func LoadConfig() (*Config, error) {
 		log.Printf("DEBUG: Cloudflare DNS updates enabled for %d domains", len(config.CloudflareDomains))
 	} else {
 		log.Printf("DEBUG: Cloudflare DNS updates disabled")
+	}
+	if config.CreateWildcardCerts && config.CloudflareEnabled {
+		log.Printf("DEBUG: Wildcard certificate creation enabled for Cloudflare domains")
+	} else {
+		log.Printf("DEBUG: Wildcard certificate creation disabled")
 	}
 
 	return config, nil
