@@ -415,11 +415,11 @@ func (c *NPMClient) SyncDomainsToNPM(domains []DomainConfig, createWildcardCerts
 			continue
 		}
 
-		// Determine if this should use HTTPS (port 443)
-		useHTTPS := port == 443
+		// Check if domain contains "https" to determine if HTTPS should be used
+		useHTTPS := strings.Contains(strings.ToLower(originalDomain), "https")
 		var certificateID int
 
-		// If using HTTPS, find or create a certificate
+		// If HTTPS is requested and email is provided, try to find or create a certificate
 		if useHTTPS && letsencryptEmail != "" {
 			certID, err := c.FindCertificateForDomain(domain, createWildcardCerts, letsencryptEmail, cloudflareToken)
 			if err != nil {
@@ -452,7 +452,7 @@ func (c *NPMClient) SyncDomainsToNPM(domains []DomainConfig, createWildcardCerts
 				forwardScheme := "http"
 				sslForced := 0
 				if useHTTPS {
-					forwardScheme = "https"
+					//forwardScheme = "https"
 					sslForced = 1
 				}
 
@@ -489,7 +489,7 @@ func (c *NPMClient) SyncDomainsToNPM(domains []DomainConfig, createWildcardCerts
 			forwardScheme := "http"
 			sslForced := 0
 			if useHTTPS {
-				forwardScheme = "https"
+				//forwardScheme = "https"
 				sslForced = 1
 			}
 
@@ -708,17 +708,7 @@ func (c *NPMClient) FindCertificateForDomain(domain string, createWildcardCerts 
 		return 0, fmt.Errorf("failed to get certificates: %w", err)
 	}
 
-	// First, look for an exact domain match
-	for _, cert := range certificates {
-		for _, certDomain := range cert.DomainNames {
-			if certDomain == domain {
-				log.Printf("DEBUG: Found exact certificate match for %s (ID: %d)", domain, cert.ID)
-				return cert.ID, nil
-			}
-		}
-	}
-
-	// If wildcard certs are enabled, look for a matching wildcard certificate
+	// If wildcard certs are enabled, look for a matching wildcard certificate first
 	if createWildcardCerts {
 		// Extract the root domain from the provided domain
 		// e.g., "api.example.com" -> "example.com"
@@ -733,16 +723,39 @@ func (c *NPMClient) FindCertificateForDomain(domain string, createWildcardCerts 
 			for _, cert := range certificates {
 				for _, certDomain := range cert.DomainNames {
 					if certDomain == wildcardDomain {
-						log.Printf("DEBUG: Found wildcard certificate match for %s (wildcard: %s, ID: %d)", domain, wildcardDomain, cert.ID)
+						log.Printf("DEBUG: Found existing wildcard certificate for %s (wildcard: %s, ID: %d)", domain, wildcardDomain, cert.ID)
 						return cert.ID, nil
 					}
+				}
+			}
+
+			// If no existing wildcard certificate found, create one if Cloudflare is configured
+			if cloudflareToken != "" {
+				log.Printf("DEBUG: Creating new wildcard certificate for %s", rootDomain)
+				cert, err := c.CreateCloudflareWildcardCertificate(rootDomain, letsencryptEmail, cloudflareToken)
+				if err != nil {
+					log.Printf("ERROR: Failed to create wildcard certificate for %s: %v", rootDomain, err)
+					// Fall back to individual certificate
+				} else {
+					log.Printf("DEBUG: Created wildcard certificate for %s (ID: %d)", rootDomain, cert.ID)
+					return cert.ID, nil
 				}
 			}
 		}
 	}
 
-	// No matching certificate found, create a new one
-	log.Printf("DEBUG: No existing certificate found for %s, creating new certificate", domain)
+	// Look for an exact domain match
+	for _, cert := range certificates {
+		for _, certDomain := range cert.DomainNames {
+			if certDomain == domain {
+				log.Printf("DEBUG: Found exact certificate match for %s (ID: %d)", domain, cert.ID)
+				return cert.ID, nil
+			}
+		}
+	}
+
+	// No matching certificate found, create a new individual certificate
+	log.Printf("DEBUG: No existing certificate found for %s, creating new individual certificate", domain)
 	return c.CreateCertificateForDomain(domain, letsencryptEmail, cloudflareToken)
 }
 
