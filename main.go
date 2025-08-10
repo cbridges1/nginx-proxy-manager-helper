@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"time"
@@ -37,8 +38,7 @@ func main() {
 		panic(err)
 	}
 
-	//messages,
-	_, errs := cli.Events(ctx, types.EventsOptions{})
+	messages, errs := cli.Events(ctx, types.EventsOptions{})
 
 	// Start reconciliation ticker (every minute)
 	ticker := time.NewTicker(1 * time.Minute)
@@ -69,59 +69,71 @@ func main() {
 		case <-ticker.C:
 			// Run reconciliation every minute
 			go ReconcileContainers(ctx, cli, db, npmClient)
-		//case msg := <-messages:
-		//	if msg.Type == "container" {
-		//		containerID := msg.ID
-		//
-		//		// Handle container removal/destruction events
-		//		if msg.Action == "destroy" {
-		//			if err := RemoveDomain(db, containerID); err != nil {
-		//				log.Printf("Failed to remove domain for container %s: %v", containerID, err)
-		//			}
-		//			fmt.Printf("Container Event: Action=%s, Name=%s, ID=%s (removed from database)\n",
-		//				msg.Action, msg.Actor.Attributes["name"], containerID)
-		//			continue
-		//		}
-		//
-		//		// For other events, inspect the container to check for domain label
-		//		containerInfo, err := cli.ContainerInspect(ctx, containerID)
-		//		if err != nil {
-		//			fmt.Printf("Container Event: Action=%s, Name=%s, ID=%s (failed to inspect: %v)\n",
-		//				msg.Action, msg.Actor.Attributes["name"], containerID, err)
-		//			continue
-		//		}
-		//
-		//		// Look for nginx-domain labels
-		//		var domains []DomainConfig
-		//		if containerInfo.Config != nil && containerInfo.Config.Labels != nil {
-		//			domains = ExtractNginxDomains(containerInfo.Config.Labels)
-		//		}
-		//
-		//		log.Printf("Igloo: %s", domains)
-		//		if len(domains) > 0 {
-		//			// Insert or update domains in database
-		//			log.Printf("Igloo %s", domains)
-		//			if err := InsertOrUpdateDomains(db, containerID, domains); err != nil {
-		//				log.Printf("Failed to store domains for container %s: %v", containerID, err)
-		//			} else {
-		//				// Verify the insert worked
-		//				VerifyInsert(db, containerID)
-		//				ListAllEntries(db)
-		//			}
-		//			fmt.Printf("Container Event: Action=%s, Name=%s, ID=%s, Domain Configs: (stored in database)\n",
-		//				msg.Action, msg.Actor.Attributes["name"], containerID)
-		//			for _, config := range domains {
-		//				fmt.Printf("  - %s~%s~%s\n", config.Domain, config.Address, config.Port)
-		//			}
-		//		} else {
-		//			// Remove from database if no domain labels exist
-		//			if err := RemoveDomain(db, containerID); err != nil {
-		//				log.Printf("Failed to remove domains for container %s: %v", containerID, err)
-		//			}
-		//			fmt.Printf("Container Event: Action=%s, Name=%s, ID=%s (no domain labels, removed from database)\n",
-		//				msg.Action, msg.Actor.Attributes["name"], containerID)
-		//		}
-		//	}
+		case msg := <-messages:
+			if msg.Type == "container" {
+				containerID := msg.ID
+
+				// Handle container removal/destruction events
+				if msg.Action == "destroy" {
+					existingDomains, err := GetDomainsForContainer(db, containerID)
+					if err != nil {
+						log.Printf("ERROR: Failed to get existing domains for container %s: %v", containerID, err)
+					} else if len(existingDomains) > 0 {
+						log.Printf("DEBUG: Removing %d domains from NPM for container %s", len(existingDomains), containerID)
+						if err := npmClient.RemoveProxyHostsByDomains(existingDomains); err != nil {
+							log.Printf("ERROR: Failed to remove proxy hosts from NPM for container %s: %v", containerID, err)
+						} else {
+							log.Printf("DEBUG: Successfully removed proxy hosts from NPM for container %s", containerID)
+						}
+					}
+
+					if err := RemoveDomain(db, containerID); err != nil {
+						log.Printf("Failed to remove domain for container %s: %v", containerID, err)
+					}
+					fmt.Printf("Container Event: Action=%s, Name=%s, ID=%s (removed from database)\n",
+						msg.Action, msg.Actor.Attributes["name"], containerID)
+					continue
+				}
+
+				// For other events, inspect the container to check for domain label
+				containerInfo, err := cli.ContainerInspect(ctx, containerID)
+				if err != nil {
+					fmt.Printf("Container Event: Action=%s, Name=%s, ID=%s (failed to inspect: %v)\n",
+						msg.Action, msg.Actor.Attributes["name"], containerID, err)
+					continue
+				}
+
+				// Look for nginx-domain labels
+				var domains []DomainConfig
+				if containerInfo.Config != nil && containerInfo.Config.Labels != nil {
+					domains = ExtractNginxDomains(containerInfo.Config.Labels)
+				}
+
+				log.Printf("Igloo: %s", domains)
+				if len(domains) > 0 {
+					// Insert or update domains in database
+					log.Printf("Igloo %s", domains)
+					if err := InsertOrUpdateDomains(db, containerID, domains); err != nil {
+						log.Printf("Failed to store domains for container %s: %v", containerID, err)
+					} else {
+						// Verify the insert worked
+						VerifyInsert(db, containerID)
+						ListAllEntries(db)
+					}
+					fmt.Printf("Container Event: Action=%s, Name=%s, ID=%s, Domain Configs: (stored in database)\n",
+						msg.Action, msg.Actor.Attributes["name"], containerID)
+					for _, config := range domains {
+						fmt.Printf("  - %s~%s~%s\n", config.Domain, config.Address, config.Port)
+					}
+				} else {
+					// Remove from database if no domain labels exist
+					if err := RemoveDomain(db, containerID); err != nil {
+						log.Printf("Failed to remove domains for container %s: %v", containerID, err)
+					}
+					fmt.Printf("Container Event: Action=%s, Name=%s, ID=%s (no domain labels, removed from database)\n",
+						msg.Action, msg.Actor.Attributes["name"], containerID)
+				}
+			}
 		case err := <-errs:
 			if err == io.EOF {
 				return // End of stream

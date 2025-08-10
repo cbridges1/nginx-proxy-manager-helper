@@ -63,6 +63,19 @@ func ReconcileContainers(ctx context.Context, cli *client.Client, db *sql.DB, np
 				}
 			}
 		} else {
+			// Container no longer has domain labels, remove existing domains
+			existingDomains, err := GetDomainsForContainer(db, containerID)
+			if err != nil {
+				log.Printf("ERROR: Failed to get existing domains for container %s: %v", containerID, err)
+			} else if len(existingDomains) > 0 {
+				log.Printf("DEBUG: Removing %d domains from NPM for container %s", len(existingDomains), containerID)
+				if err := npmClient.RemoveProxyHostsByDomains(existingDomains); err != nil {
+					log.Printf("ERROR: Failed to remove proxy hosts from NPM for container %s: %v", containerID, err)
+				} else {
+					log.Printf("DEBUG: Successfully removed proxy hosts from NPM for container %s", containerID)
+				}
+			}
+
 			if err := RemoveDomain(db, containerID); err != nil {
 				log.Printf("ERROR: Failed to remove domains during reconciliation: %v", err)
 			}
@@ -78,6 +91,20 @@ func ReconcileContainers(ctx context.Context, cli *client.Client, db *sql.DB, np
 	for _, containerID := range containerIDs {
 		if !seenContainers[containerID] {
 			log.Printf("RECONCILE: Removing deleted container %s from database", containerID)
+
+			// Get domains before removing them from database
+			existingDomains, err := GetDomainsForContainer(db, containerID)
+			if err != nil {
+				log.Printf("ERROR: Failed to get existing domains for deleted container %s: %v", containerID, err)
+			} else if len(existingDomains) > 0 {
+				log.Printf("DEBUG: Removing %d domains from NPM for deleted container %s", len(existingDomains), containerID)
+				if err := npmClient.RemoveProxyHostsByDomains(existingDomains); err != nil {
+					log.Printf("ERROR: Failed to remove proxy hosts from NPM for deleted container %s: %v", containerID, err)
+				} else {
+					log.Printf("DEBUG: Successfully removed proxy hosts from NPM for deleted container %s", containerID)
+				}
+			}
+
 			if err := RemoveDomain(db, containerID); err != nil {
 				log.Printf("ERROR: Failed to remove deleted container during reconciliation: %v", err)
 			}

@@ -7,7 +7,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -294,6 +296,42 @@ func (c *NPMClient) DeleteProxyHost(hostID int) error {
 	return nil
 }
 
+// sanitizeDomainName removes protocol and invalid characters from domain names
+func sanitizeDomainName(domain string) string {
+	// Remove common protocols
+	domain = strings.TrimPrefix(domain, "https://")
+	domain = strings.TrimPrefix(domain, "http://")
+	domain = strings.TrimPrefix(domain, "//")
+
+	// Parse as URL to extract just the hostname if it contains paths/query params
+	if parsedURL, err := url.Parse("http://" + domain); err == nil && parsedURL.Host != "" {
+		domain = parsedURL.Host
+	}
+
+	// Remove port if present (NPM handles ports separately)
+	if colonIndex := strings.LastIndex(domain, ":"); colonIndex != -1 {
+		// Only remove if it looks like a port (numeric after colon)
+		if portPart := domain[colonIndex+1:]; portPart != "" {
+			if _, err := strconv.Atoi(portPart); err == nil {
+				domain = domain[:colonIndex]
+			}
+		}
+	}
+
+	// Trim whitespace and convert to lowercase
+	domain = strings.ToLower(strings.TrimSpace(domain))
+
+	// Remove any remaining invalid characters according to NPM's pattern
+	// Pattern: ^[^&| @!#%^();:/\\}{=+?<>,~`'"]+$
+	// This means: no &, |, space, @, !, #, %, ^, (, ), ;, :, /, \, }, {, =, +, ?, <, >, ,, ~, `, ', "
+	invalidChars := "&| @!#%^();:/\\}{=+?<>,~`'\""
+	for _, char := range invalidChars {
+		domain = strings.ReplaceAll(domain, string(char), "")
+	}
+
+	return domain
+}
+
 func (c *NPMClient) SyncDomainsToNPM(domains []DomainConfig) error {
 	log.Printf("DEBUG: Syncing %d domains to NPM", len(domains))
 
@@ -315,7 +353,17 @@ func (c *NPMClient) SyncDomainsToNPM(domains []DomainConfig) error {
 
 	// Process each domain
 	for _, domainConfig := range domains {
-		domain := domainConfig.Domain
+		originalDomain := domainConfig.Domain
+		domain := sanitizeDomainName(originalDomain)
+
+		if domain == "" {
+			log.Printf("ERROR: Domain '%s' became empty after sanitization, skipping", originalDomain)
+			continue
+		}
+
+		if domain != originalDomain {
+			log.Printf("DEBUG: Sanitized domain '%s' to '%s'", originalDomain, domain)
+		}
 
 		// Convert port string to int
 		var port int
@@ -392,5 +440,55 @@ func (c *NPMClient) SyncDomainsToNPM(domains []DomainConfig) error {
 	}
 
 	log.Printf("DEBUG: Completed syncing domains to NPM")
+	return nil
+}
+
+func (c *NPMClient) RemoveProxyHostsByDomains(domains []string) error {
+	if len(domains) == 0 {
+		return nil
+	}
+
+	log.Printf("DEBUG: Removing proxy hosts for %d domains from NPM", len(domains))
+
+	// Sanitize domain names for consistency
+	sanitizedDomains := make(map[string]bool)
+	for _, domain := range domains {
+		sanitized := sanitizeDomainName(domain)
+		if sanitized != "" {
+			sanitizedDomains[sanitized] = true
+		}
+	}
+
+	// Get existing proxy hosts
+	existingHosts, err := c.GetProxyHosts()
+	if err != nil {
+		return fmt.Errorf("failed to get existing proxy hosts for removal: %w", err)
+	}
+
+	// Find hosts that match the domains to remove
+	var hostsToRemove []ProxyHostResponse
+	for _, host := range existingHosts {
+		for _, hostDomain := range host.DomainNames {
+			sanitizedHostDomain := sanitizeDomainName(hostDomain)
+			if sanitizedDomains[sanitizedHostDomain] {
+				hostsToRemove = append(hostsToRemove, host)
+				log.Printf("DEBUG: Found proxy host ID %d with domain '%s' to remove", host.ID, hostDomain)
+				break // Don't add the same host multiple times if it has multiple matching domains
+			}
+		}
+	}
+
+	// Remove the identified hosts
+	for _, host := range hostsToRemove {
+		log.Printf("DEBUG: Removing proxy host ID %d with domains %v", host.ID, host.DomainNames)
+		if err := c.DeleteProxyHost(host.ID); err != nil {
+			log.Printf("ERROR: Failed to remove proxy host ID %d: %v", host.ID, err)
+			// Continue with other removals even if one fails
+		} else {
+			log.Printf("DEBUG: Successfully removed proxy host ID %d", host.ID)
+		}
+	}
+
+	log.Printf("DEBUG: Completed removing proxy hosts from NPM")
 	return nil
 }

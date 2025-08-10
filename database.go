@@ -211,3 +211,23 @@ func GetAllDomains(db *sql.DB) ([]DomainConfig, error) {
 
 	return domains, nil
 }
+
+func GetDomainsForContainer(db *sql.DB, containerID string) ([]string, error) {
+	query := `SELECT domain FROM container_domains WHERE container_id = ?`
+	rows, err := db.Query(query, containerID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query domains for container: %w", err)
+	}
+	defer rows.Close()
+
+	var domains []string
+	for rows.Next() {
+		var domain string
+		if err := rows.Scan(&domain); err != nil {
+			return nil, fmt.Errorf("failed to scan domain: %w", err)
+		}
+		domains = append(domains, domain)
+	}
+
+	return domains, nil
+}
