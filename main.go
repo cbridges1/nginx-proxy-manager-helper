@@ -44,9 +44,28 @@ func main() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
+	// Start Cloudflare DNS update ticker (every 5 minutes)
+	dnsTicker := time.NewTicker(5 * time.Minute)
+	defer dnsTicker.Stop()
+
 	// Initialize NPM client
 	npmClient := NewNPMClient(config)
 	log.Printf("DEBUG: NPM client initialized for %s", npmClient.BaseURL)
+
+	// Initialize Cloudflare client
+	cloudflareClient := NewCloudflareClient(config)
+	if cloudflareClient.Enabled {
+		log.Printf("DEBUG: Cloudflare DNS client enabled for %d domains", len(cloudflareClient.Domains))
+		// Run initial DNS update
+		go func() {
+			log.Printf("DEBUG: Running initial Cloudflare DNS update")
+			if err := cloudflareClient.UpdateDNSRecords(); err != nil {
+				log.Printf("ERROR: Initial Cloudflare DNS update failed: %v", err)
+			}
+		}()
+	} else {
+		log.Printf("DEBUG: Cloudflare DNS updates disabled")
+	}
 
 	// Sync existing domains from database to NPM on startup
 	log.Printf("DEBUG: Syncing existing domains from database to NPM")
@@ -69,6 +88,16 @@ func main() {
 		case <-ticker.C:
 			// Run reconciliation every minute
 			go ReconcileContainers(ctx, cli, db, npmClient)
+		case <-dnsTicker.C:
+			// Run Cloudflare DNS update every 5 minutes
+			if cloudflareClient.Enabled {
+				go func() {
+					log.Printf("DEBUG: Running scheduled Cloudflare DNS update")
+					if err := cloudflareClient.UpdateDNSRecords(); err != nil {
+						log.Printf("ERROR: Scheduled Cloudflare DNS update failed: %v", err)
+					}
+				}()
+			}
 		case msg := <-messages:
 			if msg.Type == "container" {
 				containerID := msg.ID
@@ -119,6 +148,13 @@ func main() {
 						// Verify the insert worked
 						VerifyInsert(db, containerID)
 						ListAllEntries(db)
+						// Sync domains to NPM after successful database update
+						log.Printf("DEBUG: Syncing domains to NPM for container %s", containerID)
+						if err := npmClient.SyncDomainsToNPM(domains); err != nil {
+							log.Printf("ERROR: Failed to sync domains to NPM for container %s: %v", containerID, err)
+						} else {
+							log.Printf("DEBUG: Successfully synced domains to NPM for container %s", containerID)
+						}
 					}
 					fmt.Printf("Container Event: Action=%s, Name=%s, ID=%s, Domain Configs: (stored in database)\n",
 						msg.Action, msg.Actor.Attributes["name"], containerID)
