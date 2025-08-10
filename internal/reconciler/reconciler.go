@@ -1,4 +1,4 @@
-package main
+package reconciler
 
 import (
 	"context"
@@ -7,9 +7,15 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
+
+	"github.com/cbridges/nginx-proxy-manager-helper/internal/config"
+	"github.com/cbridges/nginx-proxy-manager-helper/internal/database"
+	"github.com/cbridges/nginx-proxy-manager-helper/internal/models"
+	"github.com/cbridges/nginx-proxy-manager-helper/internal/npm"
+	"github.com/cbridges/nginx-proxy-manager-helper/internal/utils"
 )
 
-func ReconcileContainers(ctx context.Context, cli *client.Client, db *sql.DB, npmClient *NPMClient, config *Config) {
+func ReconcileContainers(ctx context.Context, cli *client.Client, db *sql.DB, npmClient *npm.Client, cfg *config.Config) {
 	log.Printf("DEBUG: Starting container reconciliation")
 
 	containers, err := cli.ContainerList(ctx, types.ContainerListOptions{All: true})
@@ -34,28 +40,28 @@ func ReconcileContainers(ctx context.Context, cli *client.Client, db *sql.DB, np
 			continue
 		}
 
-		var domains []DomainConfig
+		var domains []models.DomainConfig
 		if containerInfo.Config != nil && containerInfo.Config.Labels != nil {
-			domains = ExtractNginxDomains(containerInfo.Config.Labels)
+			domains = models.ExtractNginxDomains(containerInfo.Config.Labels)
 		}
 
 		if len(domains) > 0 {
-			storedDomains, err := GetStoredDomains(db, containerID)
+			storedDomains, err := database.GetStoredDomains(db, containerID)
 			if err != nil {
 				log.Printf("ERROR: Database error during reconciliation: %v", err)
 			}
 
-			if !EqualDomainConfigs(domains, storedDomains) {
+			if !utils.EqualDomainConfigs(domains, storedDomains) {
 				log.Printf("RECONCILE: Updating container %s domain configs", containerID)
 				for _, config := range domains {
 					log.Printf("RECONCILE:   New: %s~%s~%s", config.Domain, config.Address, config.Port)
 				}
-				if err := InsertOrUpdateDomains(db, containerID, domains); err != nil {
+				if err := database.InsertOrUpdateDomains(db, containerID, domains); err != nil {
 					log.Printf("ERROR: Failed to update domains during reconciliation: %v", err)
 				} else {
 					// Sync domains to NPM after successful database update
 					log.Printf("DEBUG: Syncing domains to NPM for container %s", containerID)
-					if err := npmClient.SyncDomainsToNPM(domains, config.CreateWildcardCerts, config.LetsEncryptEmail, config.CloudflareToken); err != nil {
+					if err := npmClient.SyncDomainsToNPM(domains, cfg.CreateWildcardCerts, cfg.LetsEncryptEmail, cfg.CloudflareToken); err != nil {
 						log.Printf("ERROR: Failed to sync domains to NPM for container %s: %v", containerID, err)
 					} else {
 						log.Printf("DEBUG: Successfully synced domains to NPM for container %s", containerID)
@@ -64,7 +70,7 @@ func ReconcileContainers(ctx context.Context, cli *client.Client, db *sql.DB, np
 			}
 		} else {
 			// Container no longer has domain labels, remove existing domains
-			existingDomains, err := GetDomainsForContainer(db, containerID)
+			existingDomains, err := database.GetDomainsForContainer(db, containerID)
 			if err != nil {
 				log.Printf("ERROR: Failed to get existing domains for container %s: %v", containerID, err)
 			} else if len(existingDomains) > 0 {
@@ -76,13 +82,13 @@ func ReconcileContainers(ctx context.Context, cli *client.Client, db *sql.DB, np
 				}
 			}
 
-			if err := RemoveDomain(db, containerID); err != nil {
+			if err := database.RemoveDomain(db, containerID); err != nil {
 				log.Printf("ERROR: Failed to remove domains during reconciliation: %v", err)
 			}
 		}
 	}
 
-	containerIDs, err := GetAllContainerIDs(db)
+	containerIDs, err := database.GetAllContainerIDs(db)
 	if err != nil {
 		log.Printf("ERROR: Failed to get container IDs during reconciliation: %v", err)
 		return
@@ -93,7 +99,7 @@ func ReconcileContainers(ctx context.Context, cli *client.Client, db *sql.DB, np
 			log.Printf("RECONCILE: Removing deleted container %s from database", containerID)
 
 			// Get domains before removing them from database
-			existingDomains, err := GetDomainsForContainer(db, containerID)
+			existingDomains, err := database.GetDomainsForContainer(db, containerID)
 			if err != nil {
 				log.Printf("ERROR: Failed to get existing domains for deleted container %s: %v", containerID, err)
 			} else if len(existingDomains) > 0 {
@@ -105,7 +111,7 @@ func ReconcileContainers(ctx context.Context, cli *client.Client, db *sql.DB, np
 				}
 			}
 
-			if err := RemoveDomain(db, containerID); err != nil {
+			if err := database.RemoveDomain(db, containerID); err != nil {
 				log.Printf("ERROR: Failed to remove deleted container during reconciliation: %v", err)
 			}
 		}

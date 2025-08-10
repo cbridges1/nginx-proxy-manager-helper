@@ -1,4 +1,4 @@
-package main
+package config
 
 import (
 	"log"
@@ -19,7 +19,7 @@ type Config struct {
 	LetsEncryptEmail    string
 }
 
-func LoadConfig() (*Config, error) {
+func Load() (*Config, error) {
 	// Set up viper to read from .env file
 	viper.SetConfigFile(".env")
 	viper.SetConfigType("env")

@@ -1,4 +1,4 @@
-package main
+package cloudflare
 
 import (
 	"bytes"
@@ -10,9 +10,11 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/cbridges/nginx-proxy-manager-helper/internal/config"
 )
 
-type CloudflareClient struct {
+type Client struct {
 	APIToken string
 	ZoneID   string
 	Enabled  bool
@@ -20,7 +22,7 @@ type CloudflareClient struct {
 	client   *http.Client
 }
 
-type CloudflareDNSRecord struct {
+type DNSRecord struct {
 	ID      string `json:"id,omitempty"`
 	Type    string `json:"type"`
 	Name    string `json:"name"`
@@ -29,24 +31,24 @@ type CloudflareDNSRecord struct {
 	Proxied bool   `json:"proxied"`
 }
 
-type CloudflareResponse struct {
-	Success bool                  `json:"success"`
-	Errors  []CloudflareError     `json:"errors"`
-	Result  []CloudflareDNSRecord `json:"result"`
+type Response struct {
+	Success bool        `json:"success"`
+	Errors  []Error     `json:"errors"`
+	Result  []DNSRecord `json:"result"`
 }
 
-type CloudflareSingleResponse struct {
-	Success bool                `json:"success"`
-	Errors  []CloudflareError   `json:"errors"`
-	Result  CloudflareDNSRecord `json:"result"`
+type SingleResponse struct {
+	Success bool      `json:"success"`
+	Errors  []Error   `json:"errors"`
+	Result  DNSRecord `json:"result"`
 }
 
-type CloudflareError struct {
+type Error struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 }
 
-type CloudflareCreateRecord struct {
+type CreateRecord struct {
 	Type    string `json:"type"`
 	Name    string `json:"name"`
 	Content string `json:"content"`
@@ -54,7 +56,7 @@ type CloudflareCreateRecord struct {
 	Proxied bool   `json:"proxied"`
 }
 
-type CloudflareUpdateRecord struct {
+type UpdateRecord struct {
 	Type    string `json:"type"`
 	Name    string `json:"name"`
 	Content string `json:"content"`
@@ -62,21 +64,21 @@ type CloudflareUpdateRecord struct {
 	Proxied bool   `json:"proxied"`
 }
 
-func NewCloudflareClient(config *Config) *CloudflareClient {
-	if !config.CloudflareEnabled {
-		return &CloudflareClient{Enabled: false}
+func NewClient(cfg *config.Config) *Client {
+	if !cfg.CloudflareEnabled {
+		return &Client{Enabled: false}
 	}
 
-	return &CloudflareClient{
-		APIToken: config.CloudflareToken,
-		ZoneID:   config.CloudflareZoneID,
-		Enabled:  config.CloudflareEnabled,
-		Domains:  config.CloudflareDomains,
+	return &Client{
+		APIToken: cfg.CloudflareToken,
+		ZoneID:   cfg.CloudflareZoneID,
+		Enabled:  cfg.CloudflareEnabled,
+		Domains:  cfg.CloudflareDomains,
 		client:   &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
-func (c *CloudflareClient) GetCurrentIP() (string, error) {
+func (c *Client) GetCurrentIP() (string, error) {
 	// Try multiple IP detection services for reliability
 	services := []string{
 		"https://ipv4.icanhazip.com",
@@ -112,7 +114,7 @@ func (c *CloudflareClient) GetCurrentIP() (string, error) {
 	return "", fmt.Errorf("failed to detect current IP address from any service")
 }
 
-func (c *CloudflareClient) makeRequest(method, endpoint string, body io.Reader) (*http.Response, error) {
+func (c *Client) makeRequest(method, endpoint string, body io.Reader) (*http.Response, error) {
 	url := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records%s", c.ZoneID, endpoint)
 
 	req, err := http.NewRequest(method, url, body)
@@ -126,7 +128,7 @@ func (c *CloudflareClient) makeRequest(method, endpoint string, body io.Reader) 
 	return c.client.Do(req)
 }
 
-func (c *CloudflareClient) GetDNSRecords(domain string) ([]CloudflareDNSRecord, error) {
+func (c *Client) GetDNSRecords(domain string) ([]DNSRecord, error) {
 	endpoint := fmt.Sprintf("?name=%s&type=A", domain)
 
 	resp, err := c.makeRequest("GET", endpoint, nil)
@@ -140,7 +142,7 @@ func (c *CloudflareClient) GetDNSRecords(domain string) ([]CloudflareDNSRecord, 
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	var cfResp CloudflareResponse
+	var cfResp Response
 	if err := json.Unmarshal(body, &cfResp); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
@@ -152,8 +154,8 @@ func (c *CloudflareClient) GetDNSRecords(domain string) ([]CloudflareDNSRecord, 
 	return cfResp.Result, nil
 }
 
-func (c *CloudflareClient) CreateDNSRecord(domain, ip string) error {
-	record := CloudflareCreateRecord{
+func (c *Client) CreateDNSRecord(domain, ip string) error {
+	record := CreateRecord{
 		Type:    "A",
 		Name:    domain,
 		Content: ip,
@@ -177,7 +179,7 @@ func (c *CloudflareClient) CreateDNSRecord(domain, ip string) error {
 		return fmt.Errorf("failed to read response: %w", err)
 	}
 
-	var cfResp CloudflareSingleResponse
+	var cfResp SingleResponse
 	if err := json.Unmarshal(body, &cfResp); err != nil {
 		return fmt.Errorf("failed to parse response: %w", err)
 	}
@@ -190,8 +192,8 @@ func (c *CloudflareClient) CreateDNSRecord(domain, ip string) error {
 	return nil
 }
 
-func (c *CloudflareClient) UpdateDNSRecord(recordID, domain, ip string) error {
-	record := CloudflareUpdateRecord{
+func (c *Client) UpdateDNSRecord(recordID, domain, ip string) error {
+	record := UpdateRecord{
 		Type:    "A",
 		Name:    domain,
 		Content: ip,
@@ -216,7 +218,7 @@ func (c *CloudflareClient) UpdateDNSRecord(recordID, domain, ip string) error {
 		return fmt.Errorf("failed to read response: %w", err)
 	}
 
-	var cfResp CloudflareSingleResponse
+	var cfResp SingleResponse
 	if err := json.Unmarshal(body, &cfResp); err != nil {
 		return fmt.Errorf("failed to parse response: %w", err)
 	}
@@ -229,7 +231,7 @@ func (c *CloudflareClient) UpdateDNSRecord(recordID, domain, ip string) error {
 	return nil
 }
 
-func (c *CloudflareClient) UpdateDNSRecords() error {
+func (c *Client) UpdateDNSRecords() error {
 	if !c.Enabled {
 		return nil
 	}

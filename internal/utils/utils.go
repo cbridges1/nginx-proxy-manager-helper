@@ -1,6 +1,10 @@
-package main
+package utils
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/cbridges/nginx-proxy-manager-helper/internal/models"
+)
 
 func EqualStringSlices(a, b []string) bool {
 	if len(a) != len(b) {
@@ -27,7 +31,7 @@ func EqualStringSlices(a, b []string) bool {
 	return true
 }
 
-func EqualDomainConfigs(a, b []DomainConfig) bool {
+func EqualDomainConfigs(a, b []models.DomainConfig) bool {
 	if len(a) != len(b) {
 		return false
 	}

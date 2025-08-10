@@ -1,4 +1,4 @@
-package main
+package database
 
 import (
 	"database/sql"
@@ -6,9 +6,11 @@ import (
 	"log"
 
 	_ "github.com/tursodatabase/go-libsql"
+
+	"github.com/cbridges/nginx-proxy-manager-helper/internal/models"
 )
 
-func InitDB() (*sql.DB, error) {
+func Init() (*sql.DB, error) {
 	dbURL := "file:./containers.db"
 
 	db, err := sql.Open("libsql", dbURL)
@@ -36,7 +38,7 @@ func InitDB() (*sql.DB, error) {
 	return db, nil
 }
 
-func InsertOrUpdateDomain(db *sql.DB, containerID string, config DomainConfig) error {
+func InsertOrUpdateDomain(db *sql.DB, containerID string, config models.DomainConfig) error {
 	query := `
 		INSERT INTO container_domains (container_id, domain, address, port, created_at, updated_at) 
 		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -62,7 +64,7 @@ func InsertOrUpdateDomain(db *sql.DB, containerID string, config DomainConfig) e
 	return nil
 }
 
-func InsertOrUpdateDomains(db *sql.DB, containerID string, domains []DomainConfig) error {
+func InsertOrUpdateDomains(db *sql.DB, containerID string, domains []models.DomainConfig) error {
 	if err := RemoveAllDomains(db, containerID); err != nil {
 		return fmt.Errorf("failed to remove existing domains: %w", err)
 	}
@@ -107,9 +109,9 @@ func VerifyInsert(db *sql.DB, containerID string) {
 	}
 	defer rows.Close()
 
-	var configs []DomainConfig
+	var configs []models.DomainConfig
 	for rows.Next() {
-		var config DomainConfig
+		var config models.DomainConfig
 		if err := rows.Scan(&config.Domain, &config.Address, &config.Port); err != nil {
 			log.Printf("DEBUG: Error scanning domain config: %v", err)
 			continue
@@ -152,7 +154,7 @@ func ListAllEntries(db *sql.DB) {
 	log.Printf("DEBUG: Total entries: %d", count)
 }
 
-func GetStoredDomains(db *sql.DB, containerID string) ([]DomainConfig, error) {
+func GetStoredDomains(db *sql.DB, containerID string) ([]models.DomainConfig, error) {
 	query := `SELECT domain, address, port FROM container_domains WHERE container_id = ?`
 	rows, err := db.Query(query, containerID)
 	if err != nil {
@@ -160,9 +162,9 @@ func GetStoredDomains(db *sql.DB, containerID string) ([]DomainConfig, error) {
 	}
 	defer rows.Close()
 
-	var storedDomains []DomainConfig
+	var storedDomains []models.DomainConfig
 	for rows.Next() {
-		var config DomainConfig
+		var config models.DomainConfig
 		if err := rows.Scan(&config.Domain, &config.Address, &config.Port); err != nil {
 			return nil, fmt.Errorf("failed to scan domain: %w", err)
 		}
@@ -192,7 +194,7 @@ func GetAllContainerIDs(db *sql.DB) ([]string, error) {
 	return containerIDs, nil
 }
 
-func GetAllDomains(db *sql.DB) ([]DomainConfig, error) {
+func GetAllDomains(db *sql.DB) ([]models.DomainConfig, error) {
 	query := `SELECT domain, address, port FROM container_domains`
 	rows, err := db.Query(query)
 	if err != nil {
@@ -200,9 +202,9 @@ func GetAllDomains(db *sql.DB) ([]DomainConfig, error) {
 	}
 	defer rows.Close()
 
-	var domains []DomainConfig
+	var domains []models.DomainConfig
 	for rows.Next() {
-		var config DomainConfig
+		var config models.DomainConfig
 		if err := rows.Scan(&config.Domain, &config.Address, &config.Port); err != nil {
 			return nil, fmt.Errorf("failed to scan domain: %w", err)
 		}
