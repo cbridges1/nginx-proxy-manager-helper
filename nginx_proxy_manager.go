@@ -381,7 +381,7 @@ func (c *NPMClient) SyncDomainsToNPM(domains []DomainConfig, createWildcardCerts
 	// Get existing proxy hosts
 	existingHosts, err := c.GetProxyHosts()
 	if err != nil {
-		return fmt.Errorf("failed to get existing proxy hosts: %w", err)
+		//return fmt.Errorf("failed to get existing proxy hosts: %w", err)
 	}
 
 	log.Printf("DEBUG: Found %d existing proxy hosts", len(existingHosts))
@@ -398,6 +398,8 @@ func (c *NPMClient) SyncDomainsToNPM(domains []DomainConfig, createWildcardCerts
 	for _, domainConfig := range domains {
 		originalDomain := domainConfig.Domain
 		domain := sanitizeDomainName(originalDomain)
+
+		log.Printf("DEBUG: Processing domain: %s (original: %s, createWildcardCerts: %v)", domain, originalDomain, createWildcardCerts)
 
 		if domain == "" {
 			log.Printf("ERROR: Domain '%s' became empty after sanitization, skipping", originalDomain)
@@ -419,16 +421,23 @@ func (c *NPMClient) SyncDomainsToNPM(domains []DomainConfig, createWildcardCerts
 		useHTTPS := strings.Contains(strings.ToLower(originalDomain), "https")
 		var certificateID int
 
-		// If HTTPS is requested and email is provided, try to find or create a certificate
-		if useHTTPS && letsencryptEmail != "" {
-			certID, err := c.FindCertificateForDomain(domain, createWildcardCerts, letsencryptEmail, cloudflareToken)
-			if err != nil {
-				log.Printf("ERROR: Failed to find/create certificate for %s: %v", domain, err)
-				// Continue without HTTPS if certificate creation fails
-				useHTTPS = false
+		// If HTTPS is requested, try to find or create a certificate
+		if useHTTPS {
+			if letsencryptEmail != "" {
+				certID, err := c.FindCertificateForDomain(domain, createWildcardCerts, letsencryptEmail, cloudflareToken)
+				if err != nil {
+					log.Printf("ERROR: Failed to find/create certificate for %s: %v", domain, err)
+					// Continue without HTTPS if certificate creation fails
+					useHTTPS = false
+					certificateID = 0
+				} else {
+					certificateID = certID
+					log.Printf("DEBUG: Using certificate ID %d for HTTPS domain %s", certificateID, domain)
+				}
 			} else {
-				certificateID = certID
-				log.Printf("DEBUG: Using certificate ID %d for HTTPS domain %s", certificateID, domain)
+				log.Printf("WARNING: HTTPS requested for %s but no LETSENCRYPT_EMAIL configured, creating HTTP proxy instead", domain)
+				useHTTPS = false
+				certificateID = 0
 			}
 		}
 
@@ -484,7 +493,7 @@ func (c *NPMClient) SyncDomainsToNPM(domains []DomainConfig, createWildcardCerts
 			}
 		} else {
 			// Create new proxy host
-			log.Printf("DEBUG: Creating new proxy host for domain %s (HTTPS: %v)", domain, useHTTPS)
+			log.Printf("DEBUG: Creating new proxy host for domain %s (HTTPS: %v, certificateID: %d)", domain, useHTTPS, certificateID)
 
 			forwardScheme := "http"
 			sslForced := 0
@@ -708,43 +717,7 @@ func (c *NPMClient) FindCertificateForDomain(domain string, createWildcardCerts 
 		return 0, fmt.Errorf("failed to get certificates: %w", err)
 	}
 
-	// If wildcard certs are enabled, look for a matching wildcard certificate first
-	if createWildcardCerts {
-		// Extract the root domain from the provided domain
-		// e.g., "api.example.com" -> "example.com"
-		var rootDomain string
-		parts := strings.Split(domain, ".")
-		if len(parts) >= 2 {
-			rootDomain = strings.Join(parts[len(parts)-2:], ".")
-		}
-
-		if rootDomain != "" {
-			wildcardDomain := "*." + rootDomain
-			for _, cert := range certificates {
-				for _, certDomain := range cert.DomainNames {
-					if certDomain == wildcardDomain {
-						log.Printf("DEBUG: Found existing wildcard certificate for %s (wildcard: %s, ID: %d)", domain, wildcardDomain, cert.ID)
-						return cert.ID, nil
-					}
-				}
-			}
-
-			// If no existing wildcard certificate found, create one if Cloudflare is configured
-			if cloudflareToken != "" {
-				log.Printf("DEBUG: Creating new wildcard certificate for %s", rootDomain)
-				cert, err := c.CreateCloudflareWildcardCertificate(rootDomain, letsencryptEmail, cloudflareToken)
-				if err != nil {
-					log.Printf("ERROR: Failed to create wildcard certificate for %s: %v", rootDomain, err)
-					// Fall back to individual certificate
-				} else {
-					log.Printf("DEBUG: Created wildcard certificate for %s (ID: %d)", rootDomain, cert.ID)
-					return cert.ID, nil
-				}
-			}
-		}
-	}
-
-	// Look for an exact domain match
+	// Look for an exact domain match first
 	for _, cert := range certificates {
 		for _, certDomain := range cert.DomainNames {
 			if certDomain == domain {
@@ -754,8 +727,41 @@ func (c *NPMClient) FindCertificateForDomain(domain string, createWildcardCerts 
 		}
 	}
 
-	// No matching certificate found, create a new individual certificate
-	log.Printf("DEBUG: No existing certificate found for %s, creating new individual certificate", domain)
+	// Look for a matching wildcard certificate
+	var rootDomain string
+	parts := strings.Split(domain, ".")
+	if len(parts) >= 2 {
+		rootDomain = strings.Join(parts[len(parts)-2:], ".")
+	}
+
+	if rootDomain != "" {
+		wildcardDomain := "*." + rootDomain
+		for _, cert := range certificates {
+			for _, certDomain := range cert.DomainNames {
+				if certDomain == wildcardDomain {
+					log.Printf("DEBUG: Found existing wildcard certificate for %s (wildcard: %s, ID: %d)", domain, wildcardDomain, cert.ID)
+					return cert.ID, nil
+				}
+			}
+		}
+	}
+
+	// No existing certificate found, create a new one based on createWildcardCerts setting
+	if createWildcardCerts && rootDomain != "" && cloudflareToken != "" {
+		// Try to create wildcard certificate if enabled and Cloudflare is configured
+		log.Printf("DEBUG: Creating new wildcard certificate for %s", rootDomain)
+		cert, err := c.CreateCloudflareWildcardCertificate(rootDomain, letsencryptEmail, cloudflareToken)
+		if err != nil {
+			log.Printf("ERROR: Failed to create wildcard certificate for %s: %v", rootDomain, err)
+			// Fall back to individual certificate
+		} else {
+			log.Printf("DEBUG: Created wildcard certificate for %s (ID: %d)", rootDomain, cert.ID)
+			return cert.ID, nil
+		}
+	}
+
+	// Create individual certificate (either as fallback or when wildcards are disabled)
+	log.Printf("DEBUG: Creating new individual certificate for %s", domain)
 	return c.CreateCertificateForDomain(domain, letsencryptEmail, cloudflareToken)
 }
 
@@ -764,11 +770,16 @@ func (c *NPMClient) CreateCertificateForDomain(domain, email, cloudflareToken st
 	var dnsChallenge bool
 	var dnsProvider string
 
-	// Use Cloudflare DNS challenge if token is provided
+	// Use Cloudflare DNS challenge if token is provided, otherwise use HTTP-01 challenge
 	if cloudflareToken != "" {
 		dnsChallenge = true
 		dnsProvider = "cloudflare"
 		credentials = fmt.Sprintf("dns_cloudflare_api_token = %s", cloudflareToken)
+	} else {
+		// Use HTTP-01 challenge when no DNS provider is configured
+		dnsChallenge = false
+		dnsProvider = ""
+		credentials = ""
 	}
 
 	certificate := Certificate{
