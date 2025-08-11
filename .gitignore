@@ -4,3 +4,4 @@ node_modules
 *.db
 .idea
 nginx-proxy-manager-helper
+/vendor
